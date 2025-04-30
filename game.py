@@ -1,132 +1,179 @@
 import pygame
 import sys
-import time
 import os
-from resolver_dfs import resolver_dfs
-from resolver_costo_uniforme import resolver_costo_uniforme
+from solve_dfs import solve_dfs
+from solve_ucs import solve_ucs_cell_value, solve_ucs_step_value
+from gridFunctions import draw_grid, draw_button, animar_solucion
 
-# --- Constantes ---
-WIDTH, HEIGHT = 800, 600
-GRID_OFFSET = 100
-CELL_SIZE = 50
-BUTTON_WIDTH = 200
-BUTTON_HEIGHT = 40
-WHITE = (255, 255, 255)
-GRAY = (200, 200, 200)
-BLUE = (100, 100, 255)
-GREEN = (0, 255, 0)
-RED = (255, 0, 0)
-BLACK = (0, 0, 0)
-YELLOW = (255, 255, 0)
 
-pygame.init()
-screen = pygame.display.set_mode((WIDTH, HEIGHT))
-pygame.display.set_caption("Laberinto Saltarín")
-font = pygame.font.SysFont(None, 24)
-clock = pygame.time.Clock()
-
-# --- Variables globales ---
-laberinto = []
+mazes = []
+actual_maze = 0
+maze = []
 start = end = None
-filas = columnas = 0
-camino_solucion = []
-algoritmo_usado = "DFS"  # o "Costo uniforme"
+rows = columns = 0
+solution_path = []
+selected_algorithm = "DFS"
+results = []
 
-# --- Funciones de lógica ---
-def cargar_laberinto_desde_archivo():
-    global laberinto, start, end, filas, columnas, camino_solucion
+def load_maze():
+    global maze, start, end, rows, columns, solution_path
+    
+    if not mazes or actual_maze >= len(mazes):
+        return
+    
+    lab = mazes[actual_maze]
+    maze = lab["grid"]
+    start = lab["start"]
+    end = lab["end"]
+    rows = lab["rows"]
+    columns = lab["columns"]
+    solution_path = lab["solution"]
+    print("ola")
 
-    ruta = input("Ingresa la ruta del archivo de laberinto (ej: laberinto.txt): ").strip()
+def load_file():
+    global mazes, maze, start, end, rows, columns, solution_path, results, actual_maze
+    
+    ruta = "./example.txt"
     if not os.path.isfile(ruta):
         print("Archivo no encontrado.")
         return
-
+    
+    mazes = []
+    results = []
+    
     with open(ruta) as f:
-        lineas = f.read().strip().split("\n")
-    if not lineas:
-        return
-    header = list(map(int, lineas[0].split()))
-    filas, columnas, si, sj, gi, gj = header
-    start, end = (si, sj), (gi, gj)
-    laberinto = [list(map(int, lineas[i + 1].split())) for i in range(filas)]
-    camino_solucion = []
+        lineas = f.readlines()
+    
+    i = 0
+    while i < len(lineas):
+        line = lineas[i].strip()
+        if line == "0":
+            break
+        try:
+            header = list(map(int, line.split()))
+            if len(header) != 6:
+                i += 1
+                continue
+            rows, columns, si, sj, gi, gj = header
+            lab_actual = []
+            
+            for j in range(1, rows + 1):
+                if i + j >= len(lineas):
+                    break
+                fila = list(map(int, lineas[i + j].strip().split()))
+                if len(fila) != columns:
+                    break
+                lab_actual.append(fila)
+            
+            if len(lab_actual) == rows:
+                mazes.append({
+                    "grid": lab_actual,
+                    "start": (si, sj),
+                    "end": (gi, gj),
+                    "rows": rows,
+                    "columns": columns,
+                    "solution": None
+                })
+                results.append(None)
+            i += rows + 1
+        except ValueError:
+            i += 1
 
-def resolver_laberinto():
-    global camino_solucion
-    if not laberinto:
+    if mazes:
+        actual_maze = 0
+        load_maze()
+        
+        print(f"Se cargaron {len(mazes)} laberintos.")
+    else:
+        print("No se encontraron laberintos válidos en el archivo.")
+
+def change_maze(direccion):
+    global actual_maze
+    
+    if not mazes:
+        return
+    
+    if direccion == "siguiente":
+        actual_maze = (actual_maze + 1) % len(mazes)
+    else:
+        actual_maze = (actual_maze - 1) % len(mazes)
+    
+    load_maze()
+
+def solve():
+    global solution_path, results
+
+    if not maze:
         print("No hay laberinto cargado.")
         return
 
-    if algoritmo_usado == "DFS":
-        camino_solucion = resolver_dfs(laberinto, start, end)
-    elif algoritmo_usado == "Costo uniforme":
-        camino_solucion = resolver_costo_uniforme(laberinto, start, end)
+    if selected_algorithm == "DFS":
+        solution = solve_dfs(maze, start, end)
+    elif selected_algorithm == "Costo uniforme (celda)":
+        solution = solve_ucs_cell_value(maze, start, end)
+    elif selected_algorithm == "Costo uniforme (salto)":
+        solution = solve_ucs_step_value(maze, start, end)
+    else:
+        solution = None
 
-    if camino_solucion is None:
+    print(solution)
+    mazes[actual_maze]["solution"] = solution
+    solution_path = solution
+
+    if solution is None:
+        results[actual_maze] = "No hay solución"
         print("Resultado: No hay solución.")
     else:
-        print(f"Resultado: Solución encontrada en {len(camino_solucion) - 1} movimientos.")
-        animar_solucion(camino_solucion)
+        results[actual_maze] = str(len(solution) - 1)
+        print(f"Resultado: Solución encontrada en {len(solution) - 1} movimientos.")
+        animar_solucion(solution, maze, rows, columns, start, end, actual_maze, results)
 
-# --- Visualización animada ---
-def animar_solucion(camino):
-    for (i, j) in camino:
-        dibujar_grilla(destacar=(i, j))
-        pygame.display.flip()
-        pygame.time.wait(1000)
-
-# --- Dibujar UI ---
-def dibujar_grilla(destacar=None):
-    screen.fill(WHITE)
-    for i in range(filas):
-        for j in range(columnas):
-            x = GRID_OFFSET + j * CELL_SIZE
-            y = GRID_OFFSET + i * CELL_SIZE
-            color = GRAY
-            if (i, j) == start:
-                color = GREEN
-            elif (i, j) == end:
-                color = RED
-            elif (i, j) == destacar:
-                color = YELLOW
-            pygame.draw.rect(screen, color, (x, y, CELL_SIZE, CELL_SIZE))
-            pygame.draw.rect(screen, BLACK, (x, y, CELL_SIZE, CELL_SIZE), 2)
-            valor = font.render(str(laberinto[i][j]), True, BLACK)
-            screen.blit(valor, (x + 15, y + 15))
-
-def dibujar_boton(x, y, texto, activo=False):
-    color = BLUE if not activo else RED
-    pygame.draw.rect(screen, color, (x, y, BUTTON_WIDTH, BUTTON_HEIGHT))
-    pygame.draw.rect(screen, BLACK, (x, y, BUTTON_WIDTH, BUTTON_HEIGHT), 2)
-    label = font.render(texto, True, WHITE)
-    screen.blit(label, (x + 10, y + 10))
-
-# --- Loop principal ---
 def main():
-    global algoritmo_usado
+    global selected_algorithm
+    
     running = True
     while running:
-        screen.fill(WHITE)
-        dibujar_grilla()
-        dibujar_boton(50, 20, "Cargar laberinto")
-        dibujar_boton(280, 20, "Resolver laberinto")
-        dibujar_boton(550, 20, "Algoritmo: " + algoritmo_usado, activo=True)
-
+        draw_grid(maze, rows, columns, start, end, solution_path, actual_maze, results)
+        
+        btn_width = 200
+        total_width = 3 * btn_width + 20
+        start_x = (1200 - total_width) // 2
+        
+        draw_button(start_x, 20, "Cargar laberinto")
+        draw_button(start_x + btn_width + 10, 20, "Resolver laberinto")
+        draw_button(start_x + 2 * (btn_width + 10), 20, selected_algorithm, activo=True)
+        
+        nav_btn_width = 200
+        draw_button(50, 520, "< Anterior")
+        draw_button(1200 - 50 - nav_btn_width, 520, "Siguiente >")
+        
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
             elif event.type == pygame.MOUSEBUTTONDOWN:
                 x, y = event.pos
-                if 50 <= x <= 50 + BUTTON_WIDTH and 20 <= y <= 20 + BUTTON_HEIGHT:
-                    cargar_laberinto_desde_archivo()
-                elif 280 <= x <= 280 + BUTTON_WIDTH and 20 <= y <= 20 + BUTTON_HEIGHT:
-                    resolver_laberinto()
-                elif 550 <= x <= 550 + BUTTON_WIDTH and 20 <= y <= 20 + BUTTON_HEIGHT:
-                    algoritmo_usado = "Costo uniforme" if algoritmo_usado == "DFS" else "DFS"
 
+                if start_x <= x <= start_x + btn_width and 20 <= y <= 20 + 40:
+                    load_file()
+                elif start_x + btn_width + 10 <= x <= start_x + 2 * btn_width + 10 and 20 <= y <= 20 + 40:
+                    solve()
+                elif start_x + 2 * (btn_width + 10) <= x <= start_x + 3 * btn_width + 20 and 20 <= y <= 20 + 40:
+                    if selected_algorithm == "DFS":
+                        selected_algorithm = "Costo uniforme (celda)"
+                    elif selected_algorithm == "Costo uniforme (celda)":
+                        selected_algorithm = "Costo uniforme (salto)"
+                    else:
+                        selected_algorithm = "DFS"
+                
+                
+                if 50 <= x <= 50 + nav_btn_width and 520 <= y <= 520 + 40:
+                    change_maze("anterior")
+                elif 1200 - 50 - nav_btn_width <= x <= 1200 - 50 and 520 <= y <= 520 + 40:
+                    change_maze("siguiente")
+        
         pygame.display.flip()
-        clock.tick(60)
-
+        pygame.time.Clock().tick(60)
+    
     pygame.quit()
     sys.exit()
 
